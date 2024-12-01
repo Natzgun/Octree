@@ -23,22 +23,18 @@ struct Color {
 struct OctreeColorNode {
   unsigned int pixelCount = 0;
   unsigned long redSum = 0, greenSum = 0, blueSum = 0;
+  OctreeColorNode *parent = nullptr;
   OctreeColorNode *children[8] = {nullptr};
   bool isLeaf = false;
 
-  ~OctreeColorNode() {
-    for (auto &child : children) {
-      delete child;
-    }
-  }
-
-  void addColor(const Color &color, int depth = 0) {
+  void addColor(const Color &color, int &allColor, int depth = 0) {
+    pixelCount++;
     if (depth == 8) {
       redSum += color.r;
       greenSum += color.g;
       blueSum += color.b;
-      pixelCount++;
       isLeaf = true;
+      if (pixelCount == 1) allColor++;
       return;
     }
 
@@ -48,21 +44,31 @@ struct OctreeColorNode {
 
     if (children[index] == nullptr) {
       children[index] = new OctreeColorNode();
+      children[index]->parent = this;
     }
-    children[index]->addColor(color, depth + 1);
+    children[index]->addColor(color, allColor, depth + 1);
   }
-
+  // Llamar al metodo solo para verificar que un nodo padre se volvio un nodo
+  // hoja;
+  bool allChildrenAreLeaf() {
+    for (auto &child : children) {
+      if (child != nullptr && !child->isLeaf) {
+        return false;
+      }
+    }
+    return true;
+  }
   void reduce(
       std::priority_queue<std::pair<int, OctreeColorNode *>,
                           std::vector<std::pair<int, OctreeColorNode *> >,
                           std::greater<> > &leafNodes) {
+    if (allChildrenAreLeaf()) {
+      leafNodes.emplace(this->pixelCount, this);
+      return;
+    }
     for (auto &child : children) {
       if (child != nullptr) {
-        if (child->isLeaf) {
-          leafNodes.emplace(child->pixelCount, child);
-        } else {
-          child->reduce(leafNodes);
-        }
+        child->reduce(leafNodes);
       }
     }
   }
@@ -71,6 +77,7 @@ struct OctreeColorNode {
 class OctreeColorQuantizer {
  private:
   OctreeColorNode *root;
+  int allColor = 0;
   int maxColors;
 
  public:
@@ -80,43 +87,60 @@ class OctreeColorQuantizer {
 
   ~OctreeColorQuantizer() { delete root; }
 
-  void addColor(const Color &color) { root->addColor(color); }
+  void addColor(const Color &color) { root->addColor(color, this->allColor); }
+  int getAllColor() { return allColor; }
 
   std::vector<Color> getPalette() {
     std::priority_queue<std::pair<int, OctreeColorNode *>,
                         std::vector<std::pair<int, OctreeColorNode *> >,
                         std::greater<> >
-        leafNodes;
-    root->reduce(leafNodes);
+        nodeWithAllChildrenLeaf;
+    root->reduce(nodeWithAllChildrenLeaf);
+    while (allColor > maxColors) {
+      auto [_, node] = nodeWithAllChildrenLeaf.top();
+      nodeWithAllChildrenLeaf.pop();
 
-    while (leafNodes.size() > maxColors) {
-      auto [_, node] = leafNodes.top();
-      leafNodes.pop();
       for (auto &child : node->children) {
         if (child != nullptr) {
-          leafNodes.emplace(child->pixelCount, child);
+          node->redSum += child->redSum;
+          node->blueSum += child->blueSum;
+          node->greenSum += child->greenSum;
+          delete child;
+          child = nullptr;
+          allColor--;
         }
+      }
+      node->isLeaf = true;
+      allColor++;
+      if ((node->parent)->allChildrenAreLeaf()) {
+        nodeWithAllChildrenLeaf.emplace(node->parent->pixelCount, node->parent);
       }
     }
 
     std::vector<Color> palette;
-    while (!leafNodes.empty()) {
-      auto [_, node] = leafNodes.top();
-      leafNodes.pop();
-      Color avgColor = {static_cast<uint8_t>(node->redSum / node->pixelCount),
-                        static_cast<uint8_t>(node->greenSum / node->pixelCount),
-                        static_cast<uint8_t>(node->blueSum / node->pixelCount)};
-      palette.push_back(avgColor);
+
+    while (!nodeWithAllChildrenLeaf.empty()) {
+      auto [_, node] = nodeWithAllChildrenLeaf.top();
+      nodeWithAllChildrenLeaf.pop();
+      for (auto &child : node->children) {
+        if (child != nullptr) {
+          Color avgColor = {
+              static_cast<uint8_t>(child->redSum / child->pixelCount),
+              static_cast<uint8_t>(child->greenSum / child->pixelCount),
+              static_cast<uint8_t>(child->blueSum / child->pixelCount)};
+          palette.push_back(avgColor);
+        }
+      }
     }
+    imgPaleta((palette));
     return palette;
   }
-  void imgPaleta() {
-    std::vector<Color> palette = getPalette();
+  void imgPaleta(std::vector<Color> &palette) {
     std::sort(palette.begin(), palette.end());
     int numColors = palette.size();
     int n = static_cast<int>(std::ceil(std::sqrt(numColors)));
 
-    std::vector<unsigned char> image(n * n * 3, 255);  // Initialize with white
+    std::vector<unsigned char> image(n * n * 3, 255);  // Lo inicializamos con blanco
 
     for (int i = 0; i < numColors; ++i) {
       int x = i % n;
@@ -127,21 +151,19 @@ class OctreeColorQuantizer {
       image[index + 2] = palette[i].b;
     }
 
-    stbi_write_png("./result/output_square_image.png", n, n, 3, image.data(), n * 3);
+    stbi_write_png("output_square_image.png", n, n, 3, image.data(), n * 3);
   }
 };
 
 int main() {
   int width, height, channels;
-  unsigned char *img =
-      stbi_load("./images/bugy.png", &width,
-                &height, &channels, 3);
+  unsigned char *img = stbi_load("../img_6.png", &width, &height, &channels, 3);
   if (img == nullptr) {
     std::cerr << "Error al cargar la imagen" << std::endl;
     return 1;
   }
 
-  OctreeColorQuantizer quantizer(3);
+  OctreeColorQuantizer quantizer(64);
   for (int y = 0; y < height; ++y) {
     for (int x = 0; x < width; ++x) {
       int index = (y * width + x) * 3;
@@ -149,6 +171,7 @@ int main() {
       quantizer.addColor(color);
     }
   }
+  std::cout << "All colors: " << quantizer.getAllColor() << std::endl;
 
   std::vector<Color> palette = quantizer.getPalette();
 
@@ -174,9 +197,8 @@ int main() {
     }
   }
 
-  stbi_write_png("./result/output_image.png", width, height, 3, newImage.data(),
+  stbi_write_png("output_image.png", width, height, 3, newImage.data(),
                  width * 3);
-  quantizer.imgPaleta();
   stbi_image_free(img);
 
   return 0;
