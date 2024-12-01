@@ -151,19 +151,19 @@ class OctreeColorQuantizer {
       image[index + 2] = palette[i].b;
     }
 
-    stbi_write_png("output_square_image.png", n, n, 3, image.data(), n * 3);
+    stbi_write_png("../result/paletteColor.png", n, n, 3, image.data(), n * 3);
   }
 };
 
 int main() {
   int width, height, channels;
-  unsigned char *img = stbi_load("../img_6.png", &width, &height, &channels, 3);
+  unsigned char *img = stbi_load("../images/girl.jpg", &width, &height, &channels, 3);
   if (img == nullptr) {
     std::cerr << "Error al cargar la imagen" << std::endl;
     return 1;
   }
 
-  OctreeColorQuantizer quantizer(64);
+  OctreeColorQuantizer quantizer(8);
   for (int y = 0; y < height; ++y) {
     for (int x = 0; x < width; ++x) {
       int index = (y * width + x) * 3;
@@ -197,7 +197,7 @@ int main() {
     }
   }
 
-  stbi_write_png("output_image.png", width, height, 3, newImage.data(),
+  stbi_write_png("../result/output_image.png", width, height, 3, newImage.data(),
                  width * 3);
   stbi_image_free(img);
 
